@@ -15,6 +15,7 @@
 """
 Implementation of the core prompting based approach to SQL Generation
 """
+import re
 from typing import Callable
 from uuid import uuid4
 
@@ -42,6 +43,7 @@ class _CoreSqlGeneratorPrompt(BaseModel):
     dialect_prompt_template_map: dict[str, SkipValidation[BasePromptTemplate]]
     parser: SkipValidation[StructuredOutputParser] | None = None
     post_processor: Callable
+    linter: Callable
 
 
 class _SqlGeneratorPrompts:
@@ -83,6 +85,7 @@ class _SqlGeneratorPrompts:
             dialect_prompt_template_map={"default": prompt_template},
             parser=self.default_parser,
             post_processor=lambda x: x.get("query"),
+            linter=lambda x: re.sub("```sql|```", "", x).strip("\n")
         )
 
     @property
@@ -98,6 +101,7 @@ class _SqlGeneratorPrompts:
             dialect_prompt_template_map={"default": prompt_template},
             parser=self.default_parser,
             post_processor=lambda x: x.get("query"),
+            linter=lambda x: re.sub("```sql|```", "", x).strip("\n")
         )
 
     @property
@@ -109,6 +113,7 @@ class _SqlGeneratorPrompts:
             post_processor=lambda x: x.split("SQLResult:")[0]
             .split("SQLQuery:")[-1]
             .strip(),
+            linter=lambda x: re.sub("```sql|```", "", x).strip("\n")
         )
 
     @classmethod
@@ -140,6 +145,7 @@ class _SqlGeneratorPrompts:
             dialect_prompt_template_map={"default": prompt_template},
             post_processor=post_processor,
             parser=parser,
+            linter=lambda x: re.sub("```sql|```", "", x).strip("\n")
         )
 
 
@@ -219,6 +225,7 @@ class CoreSqlGenerator(BaseSqlGenerationTask):
             else raw_response
         )
         processed_response = self.prompt.post_processor(parsed_response)
+        cleaned_response = self.prompt.linter(processed_response)
         intermediate_steps = [
             {
                 "tasktype": self.tasktype,
@@ -227,12 +234,13 @@ class CoreSqlGenerator(BaseSqlGenerationTask):
                 "raw_response": raw_response,
                 "parsed_response": parsed_response,
                 "processed_response": processed_response,
+                "cleaned_response": cleaned_response,
             }
         ]
 
         return CoreSqlGenratorResult(
             db_name=db.name,
             question=question,
-            generated_query=processed_response,
+            generated_query=cleaned_response,
             intermediate_steps=intermediate_steps,
         )

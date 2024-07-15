@@ -15,6 +15,7 @@
 """
 Implementation of the core prompting based approach to Eval and Fix for SQL.
 """
+import re
 from typing import Callable, List
 from uuid import uuid4
 
@@ -41,6 +42,7 @@ class _CoreEvalFixPrompt(BaseModel):
     dialect_prompt_template_map: dict[str, SkipValidation[BasePromptTemplate]]
     parser: SkipValidation[StructuredOutputParser] | None = None
     post_processor: Callable
+    linter: Callable
 
 
 class _EvalFixPrompts:
@@ -83,6 +85,7 @@ class _EvalFixPrompts:
             dialect_prompt_template_map={"default": prompt_template},
             parser=self.default_parser,
             post_processor=lambda x: x.get("query"),
+            linter=lambda x: re.sub("```sql|```", "", x).strip("\n")
         )
 
     @classmethod
@@ -114,6 +117,7 @@ class _EvalFixPrompts:
             dialect_prompt_template_map={"default": prompt_template},
             post_processor=post_processor,
             parser=parser,
+            linter=lambda x: re.sub("```sql|```", "", x).strip("\n")
         )
 
 
@@ -229,6 +233,7 @@ class CoreEvalFix(BaseEvalFixTask):
                     else raw_response
                 )
                 processed_response = self.prompt.post_processor(parsed_response)
+                cleaned_response = self.prompt.linter(processed_response)
                 intermediate_steps.append(
                     {
                         f"trial_{trial_id}": {
@@ -238,16 +243,18 @@ class CoreEvalFix(BaseEvalFixTask):
                                     "raw_response": raw_response,
                                     "parsed_response": parsed_response,
                                     "processed_response": processed_response,
+                                    "cleaned_response": cleaned_response,
                                 }
                     }
                 )
-                logger.info(f"New generated query: {processed_response}")
-                trials.append(processed_response)
+                logger.info(f"New generated query: {cleaned_response}")
+                trials.append(cleaned_response)
                 trial_id += 1
-                raise RuntimeError("Retry Evaluation...") from db_error
+                logger.info("Retrying Evaluation...")
             else:
                 logger.success("Generated Query successfully evaluated ...")
-                return sql
+            
+            return sql
 
         # Eval and Fix
         try:
